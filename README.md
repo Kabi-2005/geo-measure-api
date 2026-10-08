@@ -17,6 +17,24 @@ python manage.py test             # run the test suite
 
 Requires Python 3.10+. `geopandas`/`pyogrio` ship wheels with GDAL bundled, so no system GDAL install is needed.
 
+## Configuration
+
+All settings come from environment variables (see `.env.example`). Defaults are production-safe:
+`DEBUG` is off, only localhost hosts are allowed, and a random secret key is generated per process.
+The app runs out of the box with no configuration.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DJANGO_DEBUG` | `0` | Set `1` for local development only |
+| `DJANGO_SECRET_KEY` | random per process | Set a fixed value in real deployments |
+| `DJANGO_ALLOWED_HOSTS` | `localhost,127.0.0.1,[::1]` | Comma-separated hostnames |
+| `DJANGO_SECURE` | `0` | `1` behind HTTPS: SSL redirect, HSTS, secure cookies |
+| `DJANGO_LOG_LEVEL` | `INFO` | Logging level |
+| `MAX_UPLOAD_MB` / `MAX_UNCOMPRESSED_MB` | `50` / `500` | Upload and zip-bomb limits |
+| `DJANGO_DB_PATH` / `DJANGO_MEDIA_ROOT` | project folder | Where data and uploads live |
+
+Windows (cmd): `set DJANGO_DEBUG=1`. macOS/Linux: `export DJANGO_DEBUG=1`.
+
 ## Try it
 
 Two sample files are in `samples/`. With the server running:
@@ -54,6 +72,11 @@ curl -F "file=@samples/survey.kml" http://localhost:8000/api/files/
 | 201 | Processed successfully |
 | 400 | Invalid upload (wrong extension, too large, no file) |
 | 422 | File accepted but could not be processed (`status: FAILED`, reason in `error`) |
+
+**Why 422 for a failed file?** The request itself is well-formed (so not 400) and the server is healthy (so not 500),
+but the *content* cannot be processed (corrupt zip, missing `.prj`, mixed CRS). 422 Unprocessable Content expresses exactly that.
+The failed record is still stored, so `GET /api/files/{id}/` returns `status: FAILED` with the reason, and
+`GET .../measurements/` returns `409` because there is nothing to measure.
 
 ### `GET /api/files/{id}/`  - file information
 Same shape as the response above. `404` for an unknown id.
@@ -127,7 +150,8 @@ files/
 | Decision | Why | Alternatives considered |
 |---|---|---|
 | Per-feature UTM zone | Simple, standard, accurate to roughly 0.1% for normal-sized features | Equal-area projection (best for area, worse for length); geodesic calculation on the ellipsoid (most accurate, especially for features spanning many zones). A natural upgrade. |
-| Synchronous processing | Simplest correct design for the scope; the API response already contains the final status | Celery/RQ job queue (see future scope) |
+| Synchronous processing | Simplest correct design for the scope; the API response already contains the final status. Upload size is capped to bound request time. | Celery/RQ job queue (see future scope) |
+| Environment-based settings with safe defaults | Same code runs locally and in production; nothing secret is committed | Hardcoded settings, `python-dotenv`, per-environment settings modules |
 | `status` field on the file anyway | The API contract already supports async without changes | n/a |
 | Store GeoJSON in a `JSONField` | Works on SQLite with zero setup | PostGIS `GeometryField` for spatial queries and indexing |
 | Measurements computed at upload and stored | Reads are fast and results are reproducible | Compute on request |

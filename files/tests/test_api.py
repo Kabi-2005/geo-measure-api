@@ -12,6 +12,9 @@ from rest_framework.test import APITestCase
 from shapely.geometry import LineString, Point, Polygon
 
 from files.services.measurements import measure, utm_epsg_for
+from files.services.readers import _json_safe
+import numpy as np
+import pandas as pd
 from pyproj import CRS
 
 GEOD = Geod(ellps="WGS84")
@@ -125,7 +128,31 @@ class FileApiTests(APITestCase):
         self.assertEqual(r.status_code, 422)
         self.assertIn("CRS", r.data["error"])
 
+    def test_nat_values_become_null(self):
+        """Regression: pandas NaT used to be stored as the string "NaT"."""
+        r = self._upload("survey.kml", KML.encode())
+        m = self.client.get(f"/api/files/{r.data['id']}/measurements/").data
+        for feature in m["features"]:
+            for key in ("timestamp", "begin", "end"):
+                self.assertIsNone(feature["properties"][key], key)
+
+    def test_failed_file_uses_422_and_reports_reason(self):
+        r = self._upload("bad.zip", b"not a zip")
+        self.assertEqual(r.status_code, 422)
+        self.assertTrue(r.data["error"])
+        info = self.client.get(f"/api/files/{r.data['id']}/")
+        self.assertEqual(info.data["status"], "FAILED")
+
     def test_unknown_id_404(self):
         self.assertEqual(
             self.client.get("/api/files/00000000-0000-0000-0000-000000000000/").status_code, 404
         )
+
+
+class JsonSafeTests(APITestCase):
+    def test_scalar_conversion(self):
+        self.assertIsNone(_json_safe(pd.NaT))
+        self.assertIsNone(_json_safe(float("nan")))
+        self.assertIsNone(_json_safe(np.nan))
+        self.assertEqual(_json_safe(np.int64(5)), 5)
+        self.assertEqual(_json_safe(pd.Timestamp("2026-01-02")), "2026-01-02T00:00:00")

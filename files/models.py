@@ -3,6 +3,10 @@ import uuid
 from django.db import models
 
 
+def upload_path(instance, filename):
+    return f"uploads/{instance.id}/{filename}"
+
+
 class UploadedFile(models.Model):
     class Status(models.TextChoices):
         PROCESSING = "PROCESSING"
@@ -11,7 +15,7 @@ class UploadedFile(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     filename = models.CharField(max_length=255)
-    file = models.FileField(upload_to="uploads/%Y/%m/%d/")
+    file = models.FileField(upload_to=upload_path)
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PROCESSING
     )

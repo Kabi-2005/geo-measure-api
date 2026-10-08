@@ -7,15 +7,28 @@ in a projected CRS.
 ## Setup
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python -m venv venv
+venv\Scripts\activate            # Windows (cmd). macOS/Linux: source venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py runserver
-python manage.py test            # run the test suite
+python manage.py runserver        # http://localhost:8000
+python manage.py test             # run the test suite
 ```
 
 Requires Python 3.10+. `geopandas`/`pyogrio` ship wheels with GDAL bundled, so no system GDAL install is needed.
+
+## Try it
+
+Two sample files are in `samples/`. With the server running:
+
+```bash
+curl -F "file=@samples/survey.kml" http://localhost:8000/api/files/
+curl -F "file=@samples/plot_shapefile.zip" http://localhost:8000/api/files/
+```
+
+Then open `http://localhost:8000/api/files/<id>/measurements/` using the `id` returned.
+`make_sample_shapefile.py` regenerates the Shapefile sample. Both samples contain the same
+0.01 x 0.01 degree square near 13N 77E, so both report an area of about 1,200,593 m2.
 
 ## API
 
@@ -23,17 +36,17 @@ Requires Python 3.10+. `geopandas`/`pyogrio` ship wheels with GDAL bundled, so n
 `multipart/form-data` with a `file` field (`.zip` containing a Shapefile, or `.kml`).
 
 ```bash
-curl -F "file=@survey.kml" http://localhost:8000/api/files/
+curl -F "file=@samples/survey.kml" http://localhost:8000/api/files/
 ```
 ```json
 {
-  "id": "6f1c0b0e-5b0e-4a77-9a0e-0c6f0d0c2a11",
+  "id": "2db950d0-cbaf-47a1-9115-4e5ab0112a44",
   "filename": "survey.kml",
   "feature_count": 3,
   "crs": "EPSG:4326",
   "status": "COMPLETED",
   "error": "",
-  "created_at": "2026-10-08T10:00:00Z"
+  "created_at": "2026-10-08T04:38:53Z"
 }
 ```
 | Code | Meaning |
@@ -50,22 +63,22 @@ Query params: `?page=2`, `?geometry_type=Polygon`. Returns `409` if the file is 
 
 ```json
 {
-  "file_id": "6f1c0b0e-...",
+  "file_id": "2db950d0-cbaf-47a1-9115-4e5ab0112a44",
   "filename": "survey.kml",
   "crs": "EPSG:4326",
-  "summary": {"total_area_m2": 1198113.4, "total_length_m": 5412.7, "count": 3},
+  "summary": {"total_area_m2": 1200592.74, "total_length_m": 5425.31, "count": 3},
   "count": 3, "next": null, "previous": null,
   "features": [
     {
       "id": 0,
-      "layer": "Document",
+      "layer": "survey",
       "geometry_type": "Polygon",
       "crs": "EPSG:4326",
-      "properties": {"Name": "plot", "description": null},
+      "properties": {"Name": "plot", "description": null, "timestamp": null},
       "geometry": {"type": "Polygon", "coordinates": [[[77.0, 13.0], "..."]]},
       "measurements": {
         "status": "OK",
-        "area_m2": 1198113.4,
+        "area_m2": 1200592.74,
         "length_m": null,
         "projected_crs": "EPSG:32643",
         "note": null
@@ -126,11 +139,13 @@ Accuracy is verified in tests by comparing results with `pyproj.Geod` (ellipsoid
 
 ## Learning
 
-- Shapefiles are really several files (`.shp/.shx/.dbf/.prj`), and the `.prj` is what makes the data trustworthy.
-- Computing area or length on lat/lon degrees is wrong. Distortion grows with latitude, so the CRS must be chosen deliberately.
-- KML has no per-file CRS, but it has layers (Folders) that GDAL exposes separately.
-- Untrusted zip files need explicit defences (zip-slip, decompression bombs).
-- Real-world data is messy: NaN/NaT values, null geometries, 3D coordinates, mixed geometry types. All need handling before storing as JSON.
+- **CRS is the core of the problem.** Measuring on latitude/longitude degrees gives meaningless numbers, so every feature is reprojected to a metre-based UTM zone first. I checked the results against `pyproj.Geod` to prove the projection choice was accurate.
+- **Shapefiles are several files.** The `.prj` carries the CRS, so a zip without it is rejected rather than guessed.
+- **Real data is messy.** While testing a KML upload, pandas `NaT` (not-a-time) values appeared in the JSON as the string `"NaT"`. I fixed the JSON conversion and added a test so it stays fixed.
+- **Stored filenames leak into data.** GDAL names a KML layer after the file on disk, so a renamed duplicate upload (`survey_hCz9JRG.kml`) changed the layer name. Storing each upload in its own folder (`uploads/<id>/`) keeps the original name.
+- **Untrusted zips need defences** against zip-slip and decompression bombs.
+- **Failure isolation matters.** One unsupported or empty geometry should be reported on that feature, not fail the whole file.
+- **Debugging environment issues:** a 404 from another Django project already on the same port taught me to check which URLconf is answering before suspecting my own code.
 
 ## Future Scope
 

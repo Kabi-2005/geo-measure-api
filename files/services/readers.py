@@ -4,6 +4,7 @@ import math
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+import pandas as pd
 
 import geopandas as gpd
 import pyogrio
@@ -120,19 +121,22 @@ def _iter_rows(gdf: gpd.GeoDataFrame):
 
 def _json_safe(value):
     """Convert numpy / pandas scalars so they can be stored in a JSONField."""
-    if value is None:
+    if value is None or value is pd.NaT:
         return None
+    if isinstance(value, (list, tuple, dict, set)):
+        return str(value)
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
     if hasattr(value, "item") and not isinstance(value, (str, bytes)):
         try:
             value = value.item()
         except (ValueError, AttributeError):
             pass
-    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-        return None
     if isinstance(value, (dt.datetime, dt.date, dt.time)):
         return value.isoformat()
-    if value is getattr(__import__("pandas"), "NaT", None):
-        return None
     if isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
